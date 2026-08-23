@@ -1,8 +1,15 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth-card";
 import { LoginForm } from "@/components/auth-forms";
+import { clerkAuthJsRedirect } from "@/lib/auth/paths";
+
+export const dynamic = "force-dynamic";
 
 export default function LoginPage() {
+  const next = clerkAuthJsRedirect("/login");
+  if (next) redirect(next);
+
   return (
     <AuthCard title="Sign in" subtitle="Use the Al Noor demo or your agency account.">
       <LoginForm />

@@ -97,8 +97,8 @@ export async function confirmImportAction(input: {
           continue;
         }
         if (existing && input.mode === "update") {
-          await db.lead.update({
-            where: { id: existing.id },
+          const updated = await db.lead.updateMany({
+            where: { id: existing.id, organizationId: user.organizationId },
             data: {
               notes: [existing.notes, row.notes].filter(Boolean).join("\n") || existing.notes,
               location: row.location ?? existing.location,
@@ -106,6 +106,10 @@ export async function confirmImportAction(input: {
               budgetMax: row.budget ?? existing.budgetMax,
             },
           });
+          if (updated.count === 0) {
+            summary.failed += 1;
+            continue;
+          }
           summary.updated += 1;
           continue;
         }

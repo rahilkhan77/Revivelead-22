@@ -1,13 +1,11 @@
 export const dynamic = "force-dynamic";
 
-import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AuthCard } from "@/components/auth-card";
 import { ClerkSsoCallback } from "@/components/auth/sso-callback";
 import { ClerkSignInForm } from "@/components/auth/clerk-sign-in-form";
 import { isClerkEnabled } from "@/lib/auth/clerk";
 import { getSessionUser } from "@/lib/authz";
-import { isProduction } from "@/lib/env";
 
 export default async function ClerkSignInPage({
   params,
@@ -42,14 +40,6 @@ export default async function ClerkSignInPage({
       }
     >
       <ClerkSignInForm startReset={startReset} />
-      {!isProduction() ? (
-        <p className="mt-6 text-center type-small text-muted-foreground">
-          Local demo?{" "}
-          <Link href="/login" className="text-foreground underline-offset-4 hover:underline">
-            Sign in with email
-          </Link>
-        </p>
-      ) : null}
     </AuthCard>
   );
 }

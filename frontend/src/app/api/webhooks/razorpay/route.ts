@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { billingAuditActionForEvent, isRecognizedRazorpayEvent, writeBillingAudit } from "@/lib/billing/events";
 import {
   applyRazorpaySnapshot,
   isRazorpayWebhookConfigured,
@@ -30,17 +31,23 @@ export async function POST(request: Request) {
 
   const raw = await request.text();
   const signature = request.headers.get("x-razorpay-signature");
-  if (!signature) return NextResponse.json({ error: "Missing signature" }, { status: 400 });
+  if (!signature) {
+    logSecurity("webhook.missing_signature", { provider: "billing" });
+    return NextResponse.json({ error: "Missing signature" }, { status: 400 });
+  }
   if (!verifyRazorpayWebhookSignature(raw, signature, secret)) {
-    logSecurity("webhook.invalid_signature", { provider: "razorpay" });
+    logSecurity("webhook.invalid_signature", { provider: "billing" });
     return NextResponse.json({ error: "Invalid signature" }, { status: 400 });
   }
 
   const event = parseRazorpayWebhook(raw);
   if (!event?.event) return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
   if (isStaleRazorpayEvent(event.created_at)) {
-    logSecurity("webhook.stale", { provider: "razorpay" });
+    logSecurity("webhook.stale", { provider: "billing" });
     return NextResponse.json({ error: "Stale event" }, { status: 400 });
+  }
+  if (!isRecognizedRazorpayEvent(event.event)) {
+    return NextResponse.json({ ok: true, ignored: true, reason: "unknown_event" });
   }
 
   const headerEventId =
@@ -61,12 +68,16 @@ export async function POST(request: Request) {
     } else {
       await markRazorpayPastDue(organizationId);
     }
-    return NextResponse.json({ ok: true });
-  }
-
-  if (subscription?.id) {
+  } else if (subscription?.id) {
     await applyRazorpaySnapshot(organizationId, subscription);
   }
+
+  await writeBillingAudit({
+    organizationId,
+    action: billingAuditActionForEvent(event.event),
+    entityId: subscription?.id ?? payment?.id ?? null,
+    metadata: { event: event.event },
+  });
 
   return NextResponse.json({ ok: true });
 }

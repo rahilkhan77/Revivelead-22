@@ -10,6 +10,7 @@ import { suggestMessage } from "@/lib/ai/qualify";
 import { getMessagingProvider } from "@/lib/messaging/provider";
 import { runAutomations } from "@/lib/automations/engine";
 import { nextBusinessTime, isWithinBusinessHours } from "@/lib/follow-up/business-hours";
+import { resolveAssigneeInOrganization } from "@/lib/org";
 
 const BATCH_SIZE = 50;
 
@@ -106,6 +107,7 @@ export async function scheduleLeadSequence(
     },
   ];
 
+  const assignedToId = await resolveAssigneeInOrganization(lead.organizationId, lead.assignedAgentId);
   await db.followUp.createMany({
     data: steps.map((step) => ({
       organizationId: lead.organizationId,
@@ -113,14 +115,14 @@ export async function scheduleLeadSequence(
       type: step.type,
       dueAt: step.dueAt,
       stepIndex: step.stepIndex,
-      assignedToId: lead.assignedAgentId,
+      assignedToId,
       message: step.message,
     })),
   });
   await dispatchWebhooks(lead.organizationId, "followup.created", { leadId: lead.id, steps: steps.length });
 
-  await db.lead.update({
-    where: { id: lead.id },
+  await db.lead.updateMany({
+    where: { id: lead.id, organizationId: lead.organizationId },
     data: { nextFollowUpAt: steps[0]?.dueAt },
   });
 }
@@ -132,7 +134,7 @@ export async function processDueFollowUps(organizationId?: string) {
       dueAt: { lte: new Date() },
       ...(organizationId ? { organizationId } : {}),
     },
-    select: { id: true },
+    select: { id: true, organizationId: true },
     take: BATCH_SIZE,
     orderBy: { dueAt: "asc" },
   });
@@ -140,16 +142,16 @@ export async function processDueFollowUps(organizationId?: string) {
   let processed = 0;
   for (const item of due) {
     const claimed = await db.followUp.updateMany({
-      where: { id: item.id, status: "PENDING" },
+      where: { id: item.id, organizationId: item.organizationId, status: "PENDING" },
       data: { status: "PROCESSING" },
     });
     if (claimed.count === 0) continue;
     try {
-      await executeFollowUp(item.id);
+      await executeFollowUp(item.id, item.organizationId);
       processed += 1;
     } catch {
-      await db.followUp.update({
-        where: { id: item.id },
+      await db.followUp.updateMany({
+        where: { id: item.id, organizationId: item.organizationId },
         data: { status: "FAILED" },
       });
       logServerError("follow_up_failed", { followUpId: item.id });
@@ -170,8 +172,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
   const settings = getOrgSettings(followUp.organization.settings);
 
   if (lead.status === "WON" || lead.status === "LOST") {
-    await db.followUp.update({
-      where: { id: followUp.id },
+    await db.followUp.updateMany({
+      where: { id: followUp.id, organizationId: followUp.organizationId },
       data: { status: "CANCELLED", completedAt: new Date() },
     });
     return;
@@ -186,8 +188,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
       settings.followUp.businessHoursEnd,
     )
   ) {
-    await db.followUp.update({
-      where: { id: followUp.id },
+    await db.followUp.updateMany({
+      where: { id: followUp.id, organizationId: followUp.organizationId },
       data: {
         status: "PENDING",
         dueAt: nextBusinessTime(
@@ -214,8 +216,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
         },
       });
     }
-    await db.followUp.update({
-      where: { id: followUp.id },
+    await db.followUp.updateMany({
+      where: { id: followUp.id, organizationId: followUp.organizationId },
       data: { status: "COMPLETED", completedAt: new Date() },
     });
     await runAutomations(lead.organizationId, "FOLLOW_UP_DUE", lead.id);
@@ -232,8 +234,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
     },
   });
   if (alreadySent) {
-    await db.followUp.update({
-      where: { id: followUp.id },
+    await db.followUp.updateMany({
+      where: { id: followUp.id, organizationId: followUp.organizationId },
       data: { status: "CANCELLED", completedAt: new Date() },
     });
     return;
@@ -251,8 +253,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
     }));
 
   if (lead.optedOutAt) {
-    await db.followUp.update({
-      where: { id: followUp.id },
+    await db.followUp.updateMany({
+      where: { id: followUp.id, organizationId: followUp.organizationId },
       data: { status: "CANCELLED", completedAt: new Date(), message: "Lead opted out." },
     });
     return;
@@ -268,8 +270,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
   });
 
   if (!result.ok) {
-    await db.followUp.update({
-      where: { id: followUp.id },
+    await db.followUp.updateMany({
+      where: { id: followUp.id, organizationId: followUp.organizationId },
       data: { status: "FAILED", message: result.error ?? "Provider failed to send." },
     });
     await dispatchWebhooks(lead.organizationId, "followup.failed", {
@@ -302,8 +304,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
     },
   });
 
-  await db.followUp.update({
-    where: { id: followUp.id },
+  await db.followUp.updateMany({
+    where: { id: followUp.id, organizationId: followUp.organizationId },
     data: { status: "SENT", completedAt: new Date(), message: body },
   });
   await dispatchWebhooks(lead.organizationId, "followup.completed", {
@@ -311,8 +313,8 @@ export async function executeFollowUp(followUpId: string, organizationId?: strin
     followUpId: followUp.id,
   });
 
-  await db.lead.update({
-    where: { id: lead.id },
+  await db.lead.updateMany({
+    where: { id: lead.id, organizationId: lead.organizationId },
     data: {
       lastContactedAt: new Date(),
       status: lead.status === "NEW" ? "CONTACTED" : lead.status,

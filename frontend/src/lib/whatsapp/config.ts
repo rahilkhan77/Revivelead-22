@@ -7,6 +7,7 @@ export type WhatsAppConfig = {
   fromNumber?: string;
   secret?: string;
   webhookSecret?: string;
+  secretFingerprint?: string;
 };
 
 export function parseWhatsAppConfig(raw: string | null | undefined): WhatsAppConfig {

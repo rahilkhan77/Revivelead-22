@@ -28,10 +28,11 @@ export async function upsertAutomationAction(formData: FormData) {
         where: { id, organizationId: user.organizationId },
       });
       if (!existing) return fail("Automation not found.");
-      await db.automation.update({
-        where: { id },
+      const updated = await db.automation.updateMany({
+        where: { id, organizationId: user.organizationId },
         data,
       });
+      if (updated.count === 0) return fail("Automation not found.");
     } else {
       await assertWithinAutomationLimit(user.organizationId);
       await db.automation.create({
@@ -54,10 +55,11 @@ export async function toggleAutomationAction(formData: FormData) {
       where: { id, organizationId: user.organizationId },
     });
     if (!automation) return fail("Automation not found.");
-    await db.automation.update({
-      where: { id },
+    const toggled = await db.automation.updateMany({
+      where: { id, organizationId: user.organizationId },
       data: { enabled: !automation.enabled },
     });
+    if (toggled.count === 0) return fail("Automation not found.");
     revalidatePath("/automations");
     return ok();
   } catch (error) {

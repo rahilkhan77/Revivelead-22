@@ -3,6 +3,8 @@ type SecurityEvent =
   | "authz.denied"
   | "rate_limit"
   | "webhook.invalid_signature"
+  | "webhook.missing_signature"
+  | "webhook.unknown_integration"
   | "webhook.stale"
   | "billing.suspicious"
   | "server.error";

@@ -1,34 +1,20 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { z } from "zod";
 import { writeAudit } from "@/lib/audit";
 import { qualifyLead, suggestMessage } from "@/lib/ai/qualify";
 import { assertMemberInOrganization } from "@/lib/org";
 import { canViewAllLeads } from "@/lib/roles";
 import { LEAD_STATUSES } from "@/lib/constants";
 import { db } from "@/lib/db";
-import { normalizeEmail, normalizePhone } from "@/lib/leads/normalize";
+import { leadFieldSchema, updateLeadFields } from "@/lib/leads/fields";
 import { ingestLead, leadVisibilityWhere, receiveLeadReply, updateLeadStatus } from "@/lib/leads/service";
 import { getMessagingProvider } from "@/lib/messaging/provider";
 import { fail, ok, toErrorMessage, withUser, type ActionResult } from "@/lib/safe-action";
+import { assertMutated, ownedId } from "@/lib/tenant";
 import type { IntentType, LeadStatus, LeadTemperature } from "@prisma/client";
 
-const leadSchema = z.object({
-  name: z.string().min(2).max(120),
-  phone: z.string().max(40).optional(),
-  email: z.string().email().max(160).optional().or(z.literal("")),
-  source: z.string().max(80).optional(),
-  propertyType: z.string().max(80).optional(),
-  location: z.string().max(120).optional(),
-  budgetMin: z.coerce.number().int().nonnegative().optional(),
-  budgetMax: z.coerce.number().int().nonnegative().optional(),
-  intent: z.enum(["BUYING", "RENTING", "UNKNOWN"]).optional(),
-  timeline: z.string().max(80).optional(),
-  bedrooms: z.coerce.number().int().min(0).max(20).optional(),
-  notes: z.string().max(4000).optional(),
-  assignedAgentId: z.string().max(80).optional(),
-});
+const leadSchema = leadFieldSchema;
 
 export async function createLeadAction(formData: FormData): Promise<ActionResult<{ id: string }>> {
   try {
@@ -70,37 +56,24 @@ export async function updateLeadAction(formData: FormData): Promise<ActionResult
   try {
     const user = await withUser();
     const id = String(formData.get("id") ?? "");
-    const existing = await db.lead.findFirst({
-      where: { id, ...leadVisibilityWhere(user.organizationId, user.id, canViewAllLeads(user.role)) },
-    });
-    if (!existing) return fail("Lead not found.");
-
-    if (formData.get("assignedAgentId")) {
-      await assertMemberInOrganization(user.organizationId, String(formData.get("assignedAgentId")));
-    }
-    const parsed = leadSchema.partial().parse({
-      name: formData.get("name") || undefined,
-      phone: formData.get("phone") || undefined,
-      email: formData.get("email") || undefined,
-      source: formData.get("source") || undefined,
-      propertyType: formData.get("propertyType") || undefined,
-      location: formData.get("location") || undefined,
-      budgetMin: formData.get("budgetMin") || undefined,
-      budgetMax: formData.get("budgetMax") || undefined,
-      intent: formData.get("intent") || undefined,
-      timeline: formData.get("timeline") || undefined,
-      bedrooms: formData.get("bedrooms") || undefined,
-      notes: formData.get("notes") || undefined,
-      assignedAgentId: formData.get("assignedAgentId") || undefined,
-    });
-
-    await db.lead.update({
-      where: { id },
-      data: {
-        ...parsed,
-        intent: parsed.intent as IntentType | undefined,
-        phoneNormalized: parsed.phone ? normalizePhone(parsed.phone) : undefined,
-        emailNormalized: parsed.email ? normalizeEmail(parsed.email) : undefined,
+    await updateLeadFields({
+      organizationId: user.organizationId,
+      leadId: id,
+      visibilityWhere: leadVisibilityWhere(user.organizationId, user.id, canViewAllLeads(user.role)),
+      fields: {
+        name: formData.get("name") || undefined,
+        phone: formData.get("phone") || undefined,
+        email: formData.get("email") || undefined,
+        source: formData.get("source") || undefined,
+        propertyType: formData.get("propertyType") || undefined,
+        location: formData.get("location") || undefined,
+        budgetMin: formData.get("budgetMin") || undefined,
+        budgetMax: formData.get("budgetMax") || undefined,
+        intent: formData.get("intent") || undefined,
+        timeline: formData.get("timeline") || undefined,
+        bedrooms: formData.get("bedrooms") || undefined,
+        notes: formData.get("notes") || undefined,
+        assignedAgentId: formData.get("assignedAgentId") || undefined,
       },
     });
     revalidatePath(`/leads/${id}`);
@@ -149,10 +122,11 @@ export async function assignLeadAction(formData: FormData): Promise<ActionResult
     if (assignedAgentId) {
       await assertMemberInOrganization(user.organizationId, assignedAgentId);
     }
-    await db.lead.update({
-      where: { id: leadId },
+    const assigned = await db.lead.updateMany({
+      where: ownedId(user.organizationId, leadId),
       data: { assignedAgentId },
     });
+    if (assigned.count === 0) return fail("Lead not found.");
     await writeAudit({
       organizationId: user.organizationId,
       userId: user.id,
@@ -199,8 +173,8 @@ export async function qualifyLeadAction(leadId: string): Promise<ActionResult> {
         .slice(0, 8000),
     });
 
-    await db.lead.update({
-      where: { id: lead.id },
+    const qualified = await db.lead.updateMany({
+      where: ownedId(user.organizationId, lead.id),
       data: {
         leadScore: result.leadScore,
         temperature: result.temperature as LeadTemperature,
@@ -211,6 +185,7 @@ export async function qualifyLeadAction(leadId: string): Promise<ActionResult> {
         estimatedValue: result.budgetMax ?? lead.estimatedValue,
       },
     });
+    if (qualified.count === 0) return fail("Lead not found.");
     revalidatePath(`/leads/${leadId}`);
     return ok(result);
   } catch (error) {
@@ -252,13 +227,18 @@ export async function sendLeadMessageAction(formData: FormData): Promise<ActionR
       },
     });
 
-    await db.lead.update({
-      where: { id: leadId },
-      data: {
-        lastContactedAt: new Date(),
-        status: lead.status === "NEW" ? "CONTACTED" : lead.status,
-      },
-    });
+    assertMutated(
+      (
+        await db.lead.updateMany({
+          where: ownedId(user.organizationId, leadId),
+          data: {
+            lastContactedAt: new Date(),
+            status: lead.status === "NEW" ? "CONTACTED" : lead.status,
+          },
+        })
+      ).count,
+      "Lead not found.",
+    );
 
     revalidatePath(`/leads/${leadId}`);
     return ok({ demo: result.demo });

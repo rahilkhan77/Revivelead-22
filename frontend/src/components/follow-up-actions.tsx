@@ -58,8 +58,12 @@ export function FollowUpActions({ id, status }: { id?: string; status?: string }
           startTransition(async () => {
             const form = new FormData();
             form.set("id", id);
-            await completeFollowUpAction(form);
-            router.refresh();
+            const result = await completeFollowUpAction(form);
+            if (!result.ok) toast.error(result.error);
+            else {
+              toast.success("Follow-up completed");
+              router.refresh();
+            }
           })
         }
       >

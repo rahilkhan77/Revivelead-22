@@ -86,8 +86,8 @@ export async function ingestLead(input: CreateLeadInput): Promise<IngestedLead> 
   const duplicate = await findDuplicateLead(input.organizationId, input.phone, input.email);
   if (duplicate) {
     const notes = [duplicate.notes, input.notes].filter(Boolean).join("\n");
-    const updated = await db.lead.update({
-      where: { id: duplicate.id },
+    const touched = await db.lead.updateMany({
+      where: { id: duplicate.id, organizationId: input.organizationId },
       data: {
         notes: notes || duplicate.notes,
         phone: duplicate.phone ?? input.phone,
@@ -95,6 +95,10 @@ export async function ingestLead(input: CreateLeadInput): Promise<IngestedLead> 
         phoneNormalized: duplicate.phoneNormalized ?? phoneNormalized,
         emailNormalized: duplicate.emailNormalized ?? emailNormalized,
       },
+    });
+    if (touched.count === 0) return Object.assign(duplicate, { deduped: true });
+    const updated = await db.lead.findFirstOrThrow({
+      where: { id: duplicate.id, organizationId: input.organizationId },
     });
     return Object.assign(updated, { deduped: true });
   }
@@ -151,8 +155,8 @@ export async function ingestLead(input: CreateLeadInput): Promise<IngestedLead> 
         notes: lead.notes,
       });
 
-      qualified = await db.lead.update({
-        where: { id: lead.id },
+      await db.lead.updateMany({
+        where: { id: lead.id, organizationId: input.organizationId },
         data: {
           leadScore: result.leadScore,
           temperature: result.temperature,
@@ -171,12 +175,20 @@ export async function ingestLead(input: CreateLeadInput): Promise<IngestedLead> 
           intentStrength: result.temperature === "HOT" ? "HIGH" : result.temperature === "WARM" ? "MEDIUM" : "LOW",
         },
       });
+      qualified =
+        (await db.lead.findFirst({
+          where: { id: lead.id, organizationId: input.organizationId },
+        })) ?? qualified;
 
       const risk = calculateRevenueRisk(qualified);
-      qualified = await db.lead.update({
-        where: { id: lead.id },
+      await db.lead.updateMany({
+        where: { id: lead.id, organizationId: input.organizationId },
         data: { riskScore: risk.riskScore, revenueAtRisk: risk.revenueAtRisk },
       });
+      qualified =
+        (await db.lead.findFirst({
+          where: { id: lead.id, organizationId: input.organizationId },
+        })) ?? qualified;
 
       if (result.temperature === "HOT") {
         await runAutomations(input.organizationId, "LEAD_BECOMES_HOT", lead.id);
@@ -190,10 +202,14 @@ export async function ingestLead(input: CreateLeadInput): Promise<IngestedLead> 
 
   if (qualified.riskScore == null) {
     const risk = calculateRevenueRisk(qualified);
-    qualified = await db.lead.update({
-      where: { id: lead.id },
+    await db.lead.updateMany({
+      where: { id: lead.id, organizationId: input.organizationId },
       data: { riskScore: risk.riskScore, revenueAtRisk: risk.revenueAtRisk },
     });
+    qualified =
+      (await db.lead.findFirst({
+        where: { id: lead.id, organizationId: input.organizationId },
+      })) ?? qualified;
   }
 
   await scheduleLeadSequence(qualified, organization.settings, organization.timezone);
@@ -272,9 +288,13 @@ export async function updateLeadStatus(input: {
     });
   }
 
-  const updated = await db.lead.update({
-    where: { id: existing.id },
+  const touched = await db.lead.updateMany({
+    where: { id: existing.id, organizationId: input.organizationId },
     data,
+  });
+  if (touched.count === 0) throw new Error("Lead not found.");
+  const updated = await db.lead.findFirstOrThrow({
+    where: { id: existing.id, organizationId: input.organizationId },
   });
 
   await writeAudit({
@@ -336,8 +356,8 @@ export async function receiveLeadReply(input: {
 
   const { isOptOutMessage } = await import("@/lib/leads/opt-out");
   if (isOptOutMessage(body)) {
-    await db.lead.update({
-      where: { id: lead.id },
+    await db.lead.updateMany({
+      where: { id: lead.id, organizationId: input.organizationId },
       data: { optedOutAt: new Date(), lastContactedAt: new Date() },
     });
     await cancelOpenFollowUps(lead.id, input.organizationId);
@@ -345,8 +365,8 @@ export async function receiveLeadReply(input: {
   }
 
   await cancelOpenFollowUps(lead.id, input.organizationId);
-  await db.lead.update({
-    where: { id: lead.id },
+  await db.lead.updateMany({
+    where: { id: lead.id, organizationId: input.organizationId },
     data: { lastContactedAt: new Date() },
   });
 

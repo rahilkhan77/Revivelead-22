@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { db } from "@/lib/db";
+import { resolveIntegrationByPhoneNumberId } from "@/lib/integrations/lookup";
 import { ingestLead, receiveLeadReply } from "@/lib/leads/service";
 import { normalizePhone } from "@/lib/leads/normalize";
 import { parseWhatsAppConfig, webhookSecretOf } from "@/lib/whatsapp/config";
@@ -22,18 +23,28 @@ export function verifyMetaSignature(rawBody: string, signature: string | null, s
   return timingSafeEqual(left, right);
 }
 
-export async function resolveOrgFromPhoneNumberId(phoneNumberId?: string | null) {
-  if (!phoneNumberId) return null;
-  const integrations = await db.integration.findMany({
-    where: { type: "WHATSAPP", enabled: true },
-  });
-  for (const item of integrations) {
-    const config = parseWhatsAppConfig(item.config);
-    if (config.phoneNumberId && config.phoneNumberId === phoneNumberId) {
-      return item.organizationId;
+export function isMetaWhatsAppPayload(payload: unknown) {
+  if (!payload || typeof payload !== "object") return false;
+  return (payload as { object?: unknown }).object === "whatsapp_business_account";
+}
+
+export function metaPhoneNumberId(payload: unknown) {
+  if (!payload || typeof payload !== "object") return null;
+  const root = payload as {
+    entry?: { changes?: { value?: { metadata?: { phone_number_id?: string } } }[] }[];
+  };
+  for (const entry of root.entry ?? []) {
+    for (const change of entry.changes ?? []) {
+      const id = change.value?.metadata?.phone_number_id?.trim();
+      if (id) return id;
     }
   }
   return null;
+}
+
+export async function resolveOrgFromPhoneNumberId(phoneNumberId?: string | null) {
+  const integration = await resolveIntegrationByPhoneNumberId(phoneNumberId);
+  return integration?.organizationId ?? null;
 }
 
 export async function handleInboundWhatsApp(input: {

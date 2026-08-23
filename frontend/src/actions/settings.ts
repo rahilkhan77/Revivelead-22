@@ -8,6 +8,7 @@ import { ADMIN_ROLES, DEFAULT_ORG_SETTINGS, type OrgSettings } from "@/lib/const
 import { db } from "@/lib/db";
 import { parseJson } from "@/lib/format";
 import { getMessagingProvider } from "@/lib/messaging/provider";
+import { stampSecretFingerprint } from "@/lib/integrations/lookup";
 import { looksMasked, parseWhatsAppConfig } from "@/lib/whatsapp/config";
 import { fail, ok, toErrorMessage, withUser } from "@/lib/safe-action";
 
@@ -107,24 +108,27 @@ export async function updateIntegrationAction(formData: FormData) {
     const existing = parseWhatsAppConfig(integration.config);
     const incomingToken = String(formData.get("accessToken") ?? "");
     const incomingSecret = String(formData.get("secret") ?? formData.get("webhookSecret") ?? "");
-    await db.integration.update({
-      where: { id },
+    const updated = await db.integration.updateMany({
+      where: { id, organizationId: user.organizationId },
       data: {
         enabled: formData.get("enabled") === "on",
-        config: JSON.stringify({
-          accessToken: looksMasked(incomingToken) ? existing.accessToken ?? "" : incomingToken,
-          phoneNumberId: String(formData.get("phoneNumberId") ?? existing.phoneNumberId ?? ""),
-          businessAccountId: String(formData.get("businessAccountId") ?? existing.businessAccountId ?? ""),
-          fromNumber: String(formData.get("fromNumber") ?? existing.fromNumber ?? ""),
-          smtpHost: String(formData.get("smtpHost") ?? ""),
-          smtpUser: String(formData.get("smtpUser") ?? ""),
-          fromEmail: String(formData.get("fromEmail") ?? ""),
-          url: String(formData.get("url") ?? ""),
-          secret: looksMasked(incomingSecret) ? existing.secret ?? existing.webhookSecret ?? "" : incomingSecret,
-          webhookSecret: looksMasked(incomingSecret) ? existing.webhookSecret ?? existing.secret ?? "" : incomingSecret,
-        }),
+        config: JSON.stringify(
+          stampSecretFingerprint({
+            accessToken: looksMasked(incomingToken) ? existing.accessToken ?? "" : incomingToken,
+            phoneNumberId: String(formData.get("phoneNumberId") ?? existing.phoneNumberId ?? ""),
+            businessAccountId: String(formData.get("businessAccountId") ?? existing.businessAccountId ?? ""),
+            fromNumber: String(formData.get("fromNumber") ?? existing.fromNumber ?? ""),
+            smtpHost: String(formData.get("smtpHost") ?? ""),
+            smtpUser: String(formData.get("smtpUser") ?? ""),
+            fromEmail: String(formData.get("fromEmail") ?? ""),
+            url: String(formData.get("url") ?? ""),
+            secret: looksMasked(incomingSecret) ? existing.secret ?? existing.webhookSecret ?? "" : incomingSecret,
+            webhookSecret: looksMasked(incomingSecret) ? existing.webhookSecret ?? existing.secret ?? "" : incomingSecret,
+          }),
+        ),
       },
     });
+    if (updated.count === 0) return fail("Integration not found.");
     await writeAudit({
       organizationId: user.organizationId,
       userId: user.id,

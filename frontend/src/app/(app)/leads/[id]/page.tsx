@@ -5,6 +5,7 @@ import { StatusBadge, TemperatureBadge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FollowUpTimeline } from "@/components/follow-up-timeline";
 import { LeadActions } from "@/components/lead-actions";
+import { LeadEditForm } from "@/components/lead-edit-form";
 import { requireUser, canViewAllLeads } from "@/lib/authz";
 import { formatBudget, formatDateTime, formatRelative } from "@/lib/format";
 import { leadVisibilityWhere } from "@/lib/leads/service";
@@ -78,6 +79,7 @@ export default async function LeadDetailPage({
                   <p>{lead.notes}</p>
                 </>
               ) : null}
+              <LeadEditForm lead={lead} />
             </CardContent>
           </Card>
           <Card>

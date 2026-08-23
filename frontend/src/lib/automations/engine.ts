@@ -1,5 +1,5 @@
 import type { AutomationActionType, AutomationTrigger, LeadStatus } from "@prisma/client";
-import { assertMemberInOrganization } from "@/lib/org";
+import { assertMemberInOrganization, resolveAssigneeInOrganization } from "@/lib/org";
 import { LEAD_STATUSES } from "@/lib/constants";
 import { db } from "@/lib/db";
 import { parseJson } from "@/lib/format";
@@ -132,7 +132,7 @@ async function executeAction(
           leadId,
           type: "DUE_REMINDER",
           dueAt: new Date(),
-          assignedToId: assignedAgentId,
+          assignedToId: await resolveAssigneeInOrganization(organizationId, assignedAgentId),
           message: config.title ?? "Follow up with this lead",
         },
       });
@@ -158,8 +158,8 @@ async function executeAction(
         if (!LEAD_STATUSES.includes(config.status)) {
           throw new Error("Invalid status in automation config.");
         }
-        await db.lead.update({
-          where: { id: leadId },
+        await db.lead.updateMany({
+          where: { id: leadId, organizationId },
           data: { status: config.status },
         });
       }
@@ -168,8 +168,8 @@ async function executeAction(
     case "ASSIGN_AGENT": {
       if (config.agentId) {
         await assertMemberInOrganization(organizationId, config.agentId);
-        await db.lead.update({
-          where: { id: leadId },
+        await db.lead.updateMany({
+          where: { id: leadId, organizationId },
           data: { assignedAgentId: config.agentId },
         });
       }

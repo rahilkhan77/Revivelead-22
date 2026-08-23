@@ -1,16 +1,26 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { resolveOrgFromSecret } from "@/lib/api-auth";
+import { resolveOrgFromSecret } from "@/lib/org";
 import { payloadTooLarge, tooManyRequests } from "@/lib/http";
+import {
+  resolveIntegrationById,
+  resolveIntegrationByPhoneNumberId,
+} from "@/lib/integrations/lookup";
 import { logSecurity } from "@/lib/log";
 import { clientKey, rateLimit, retryAfterSeconds } from "@/lib/rate-limit";
 import {
+  customInboundEventId,
+  inboundIntegrationId,
+  inboundSignatureHeader,
+  verifyInboundSignature,
+} from "@/lib/webhooks/inbound-auth";
+import { claimWebhookEvent } from "@/lib/webhooks/idempotency";
+import {
   handleInboundWhatsApp,
+  isMetaWhatsAppPayload,
+  metaPhoneNumberId,
   parseMetaWhatsAppPayload,
-  resolveOrgFromPhoneNumberId,
-  verifyMetaSignature,
 } from "@/lib/whatsapp/inbound";
-import { db } from "@/lib/db";
 import { parseWhatsAppConfig, webhookSecretOf } from "@/lib/whatsapp/config";
 
 const customSchema = z.object({
@@ -18,7 +28,19 @@ const customSchema = z.object({
   from: z.string().min(4).max(40).optional(),
   body: z.string().min(1).max(4000).optional(),
   text: z.string().min(1).max(4000).optional(),
+  eventId: z.string().trim().max(160).optional(),
+  id: z.string().trim().max(160).optional(),
+  providerId: z.string().trim().max(160).optional(),
+  organizationId: z.string().trim().max(80).optional(),
 });
+
+function unauthorized(error: string, status = 401) {
+  return NextResponse.json({ error }, { status });
+}
+
+function integrationSecret(config: string | null | undefined) {
+  return webhookSecretOf(parseWhatsAppConfig(config));
+}
 
 export async function GET(request: Request) {
   const limited = await rateLimit(clientKey(request, "inbound-verify"), "auth");
@@ -31,6 +53,7 @@ export async function GET(request: Request) {
   if (mode === "subscribe" && token && challenge) {
     const organizationId = await resolveOrgFromSecret(token, ["WHATSAPP"]);
     if (!organizationId) {
+      logSecurity("webhook.unknown_integration", { provider: "whatsapp", path: "verify" });
       return new NextResponse("Forbidden", { status: 403 });
     }
     return new NextResponse(challenge, { status: 200 });
@@ -49,6 +72,7 @@ export async function POST(request: Request) {
   }
 
   const raw = await request.text();
+  const signature = inboundSignatureHeader(request);
   let payload: unknown = null;
   try {
     payload = raw ? JSON.parse(raw) : null;
@@ -56,38 +80,33 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
   }
 
-  const headerSecret =
-    request.headers.get("x-revivelead-secret") ??
-    request.headers.get("x-api-key");
-  const signature = request.headers.get("x-hub-signature-256");
+  if (isMetaWhatsAppPayload(payload) || parseMetaWhatsAppPayload(payload).length > 0) {
+    const phoneNumberId = metaPhoneNumberId(payload);
+    const integration = await resolveIntegrationByPhoneNumberId(phoneNumberId);
+    if (!integration) {
+      logSecurity("webhook.unknown_integration", { provider: "whatsapp" });
+      return unauthorized("Unknown integration");
+    }
+    if (!signature) {
+      logSecurity("webhook.missing_signature", { provider: "whatsapp", integrationId: integration.id });
+      return unauthorized("Missing signature");
+    }
+    const secret = integrationSecret(integration.config);
+    if (!secret || !verifyInboundSignature(raw, signature, secret)) {
+      logSecurity("webhook.invalid_signature", { provider: "whatsapp", integrationId: integration.id });
+      return unauthorized("Invalid signature");
+    }
 
-  const metaMessages = parseMetaWhatsAppPayload(payload);
-  if (metaMessages.length > 0) {
+    const messages = parseMetaWhatsAppPayload(payload);
+    if (messages.length === 0) {
+      return NextResponse.json({ ok: true, ignored: true });
+    }
+
     const results = [];
-    for (const message of metaMessages) {
-      const organizationId =
-        (await resolveOrgFromPhoneNumberId(message.phoneNumberId)) ??
-        (await resolveOrgFromSecret(headerSecret, ["WHATSAPP", "WEBHOOK", "N8N"]));
-      if (!organizationId) {
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-      }
-
-      if (!signature) {
-        logSecurity("webhook.invalid_signature", { provider: "whatsapp" });
-        return NextResponse.json({ error: "Missing signature" }, { status: 401 });
-      }
-      const integration = await db.integration.findFirst({
-        where: { organizationId, type: "WHATSAPP" },
-      });
-      const secret = webhookSecretOf(parseWhatsAppConfig(integration?.config));
-      if (!secret || !verifyMetaSignature(raw, signature, secret)) {
-        logSecurity("webhook.invalid_signature", { provider: "whatsapp" });
-        return NextResponse.json({ error: "Invalid signature" }, { status: 401 });
-      }
-
+    for (const message of messages) {
       results.push(
         await handleInboundWhatsApp({
-          organizationId,
+          organizationId: integration.organizationId,
           phone: message.phone,
           body: message.body,
           providerId: message.providerId,
@@ -98,9 +117,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: true, results });
   }
 
-  const organizationId = await resolveOrgFromSecret(headerSecret, ["WHATSAPP", "WEBHOOK", "N8N"]);
-  if (!organizationId) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const integrationId = inboundIntegrationId(request);
+  if (!integrationId) {
+    logSecurity("webhook.unknown_integration", { provider: "inbound" });
+    return unauthorized("Unknown integration");
+  }
+  const integration = await resolveIntegrationById(integrationId, ["WEBHOOK", "N8N", "WHATSAPP"]);
+  if (!integration) {
+    logSecurity("webhook.unknown_integration", { provider: "inbound" });
+    return unauthorized("Unknown integration");
+  }
+  if (!signature) {
+    logSecurity("webhook.missing_signature", { provider: "inbound", integrationId: integration.id });
+    return unauthorized("Missing signature");
+  }
+  const secret = integrationSecret(integration.config);
+  if (!secret || !verifyInboundSignature(raw, signature, secret)) {
+    logSecurity("webhook.invalid_signature", { provider: "inbound", integrationId: integration.id });
+    return unauthorized("Invalid signature");
   }
 
   const parsed = customSchema.safeParse(payload);
@@ -110,13 +144,23 @@ export async function POST(request: Request) {
 
   const phone = parsed.data.phone ?? parsed.data.from ?? "";
   const body = parsed.data.body ?? parsed.data.text ?? "";
+  const eventId = customInboundEventId(parsed.data);
   const result = await handleInboundWhatsApp({
-    organizationId,
+    organizationId: integration.organizationId,
     phone,
     body,
+    providerId: eventId || undefined,
   });
   if (!result.ok) {
-    return NextResponse.json({ error: result.error ?? "Unable to store inbound message" }, { status: 400 });
+    return NextResponse.json({ error: "Unable to store inbound message" }, { status: 400 });
   }
-  return NextResponse.json({ ok: true, leadId: result.leadId, created: result.created });
+  if (eventId && !result.duplicate) {
+    await claimWebhookEvent("inbound", `${integration.organizationId}:${eventId}`);
+  }
+  return NextResponse.json({
+    ok: true,
+    leadId: result.leadId,
+    created: result.created,
+    duplicate: result.duplicate ?? false,
+  });
 }

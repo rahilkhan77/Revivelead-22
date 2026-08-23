@@ -26,8 +26,8 @@ export async function resolveOrgFromApiKey(raw?: string | null) {
     where: { keyHash, revokedAt: null },
   });
   if (!record) return null;
-  await db.apiKey.update({
-    where: { id: record.id },
+  await db.apiKey.updateMany({
+    where: { id: record.id, organizationId: record.organizationId },
     data: { lastUsedAt: new Date() },
   });
   return record.organizationId;

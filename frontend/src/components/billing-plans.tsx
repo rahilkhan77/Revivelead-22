@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   cancelSubscriptionAction,
@@ -38,6 +39,7 @@ export function BillingPlans({
 }) {
   const router = useRouter();
   const live = provider !== "none";
+  const [pending, setPending] = useState(false);
 
   return (
     <div>
@@ -75,77 +77,82 @@ export function BillingPlans({
               <Button
                 className="mt-5"
                 variant={isCurrent ? "secondary" : "default"}
-                disabled={!isOwner || isCurrent}
+                disabled={!isOwner || isCurrent || pending}
                 onClick={async () => {
                   if (!plan.priceMonthly) {
                     router.push("/contact");
                     return;
                   }
-                  const form = new FormData();
-                  form.set("plan", plan.id);
-                  const checkout = await startCheckoutAction(form);
-                  if (checkout.ok && checkout.data?.planUpdated) {
-                    toast.success("Plan change sent to Razorpay. Access updates after confirmation.");
-                    router.refresh();
-                    return;
-                  }
-                  if (checkout.ok && checkout.data?.subscriptionId && checkout.data.keyId) {
-                    try {
-                      const response = await openRazorpayCheckout({
-                        keyId: checkout.data.keyId,
-                        subscriptionId: checkout.data.subscriptionId,
-                        name: checkout.data.name,
-                        description: checkout.data.description,
-                        prefillName: checkout.data.prefillName,
-                        prefillEmail: checkout.data.prefillEmail,
-                      });
-                      const verify = new FormData();
-                      verify.set("razorpay_payment_id", response.razorpay_payment_id);
-                      verify.set("razorpay_subscription_id", response.razorpay_subscription_id);
-                      verify.set("razorpay_signature", response.razorpay_signature);
-                      const verified = await verifyRazorpayCheckoutAction(verify);
-                      if (!verified.ok) {
-                        toast.error(verified.error ?? "Payment could not be verified.");
-                        return;
-                      }
-                      if (verified.data?.confirmed) {
-                        toast.success("Payment confirmed. Your plan is active.");
-                      } else {
-                        toast.message("Checkout finished, but payment is not confirmed yet.");
-                      }
+                  if (pending) return;
+                  setPending(true);
+                  try {
+                    const form = new FormData();
+                    form.set("plan", plan.id);
+                    const checkout = await startCheckoutAction(form);
+                    if (checkout.ok && checkout.data?.planUpdated) {
+                      toast.success("Plan change sent to Razorpay. Access updates after confirmation.");
                       router.refresh();
-                    } catch (error) {
-                      if (error instanceof Error && error.message === "CHECKOUT_DISMISSED") return;
-                      toast.error(error instanceof Error ? error.message : "Unable to open Razorpay checkout.");
-                    }
-                    return;
-                  }
-                  if (checkout.ok && checkout.data?.url) {
-                    window.location.href = checkout.data.url;
-                    return;
-                  }
-                  if (checkout.ok && checkout.data?.transactionId && checkout.data.clientToken) {
-                    try {
-                      await openPaddleCheckout({
-                        transactionId: checkout.data.transactionId,
-                        clientToken: checkout.data.clientToken,
-                        environment: checkout.data.environment ?? "sandbox",
-                      });
-                      return;
-                    } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Unable to open Paddle checkout.");
                       return;
                     }
-                  }
-                  if (live) {
-                    toast.error(checkout.error ?? "Unable to start checkout.");
-                    return;
-                  }
-                  const result = await changePlanAction(form);
-                  if (!result.ok) toast.error(checkout.error ?? result.error);
-                  else {
-                    toast.success(`Moved to ${plan.name}`);
-                    router.refresh();
+                    if (checkout.ok && checkout.data?.subscriptionId && checkout.data.keyId) {
+                      try {
+                        const response = await openRazorpayCheckout({
+                          keyId: checkout.data.keyId,
+                          subscriptionId: checkout.data.subscriptionId,
+                          name: checkout.data.name,
+                          description: checkout.data.description,
+                          prefillName: checkout.data.prefillName,
+                          prefillEmail: checkout.data.prefillEmail,
+                        });
+                        const verify = new FormData();
+                        verify.set("razorpay_payment_id", response.razorpay_payment_id);
+                        verify.set("razorpay_subscription_id", response.razorpay_subscription_id);
+                        verify.set("razorpay_signature", response.razorpay_signature);
+                        const verified = await verifyRazorpayCheckoutAction(verify);
+                        if (!verified.ok) {
+                          toast.error(verified.error ?? "Payment could not be verified.");
+                          return;
+                        }
+                        if (verified.data?.confirmed) {
+                          toast.success("Payment confirmed. Your plan is active.");
+                        } else {
+                          toast.message("Checkout finished, but payment is not confirmed yet.");
+                        }
+                        router.refresh();
+                      } catch (error) {
+                        if (error instanceof Error && error.message === "CHECKOUT_DISMISSED") return;
+                        toast.error(error instanceof Error ? error.message : "Unable to open Razorpay checkout.");
+                      }
+                      return;
+                    }
+                    if (checkout.ok && checkout.data?.url) {
+                      window.location.href = checkout.data.url;
+                      return;
+                    }
+                    if (checkout.ok && checkout.data?.transactionId && checkout.data.clientToken) {
+                      try {
+                        await openPaddleCheckout({
+                          transactionId: checkout.data.transactionId,
+                          clientToken: checkout.data.clientToken,
+                          environment: checkout.data.environment ?? "sandbox",
+                        });
+                      } catch (error) {
+                        toast.error(error instanceof Error ? error.message : "Unable to open Paddle checkout.");
+                      }
+                      return;
+                    }
+                    if (live) {
+                      toast.error(checkout.error ?? "Unable to start checkout.");
+                      return;
+                    }
+                    const result = await changePlanAction(form);
+                    if (!result.ok) toast.error(checkout.error ?? result.error);
+                    else {
+                      toast.success(`Moved to ${plan.name}`);
+                      router.refresh();
+                    }
+                  } finally {
+                    setPending(false);
                   }
                 }}
               >

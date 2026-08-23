@@ -3,21 +3,21 @@
 import { revalidatePath } from "next/cache";
 import { canViewAllLeads } from "@/lib/roles";
 import { db } from "@/lib/db";
+import { canActOnFollowUp, completeFollowUpForUser } from "@/lib/follow-up/access";
 import { executeFollowUp, markDormantLeads, processDueFollowUps } from "@/lib/follow-up/engine";
 import { leadVisibilityWhere } from "@/lib/leads/service";
+import { resolveAssigneeInOrganization } from "@/lib/org";
 import { ensureManager, fail, ok, toErrorMessage, withUser } from "@/lib/safe-action";
+import { ownedId } from "@/lib/tenant";
 
 export async function completeFollowUpAction(formData: FormData) {
   try {
     const user = await withUser();
     const id = String(formData.get("id") ?? "");
-    const followUp = await db.followUp.findFirst({
-      where: { id, organizationId: user.organizationId },
-    });
-    if (!followUp) return fail("Follow-up not found.");
-    await db.followUp.update({
-      where: { id },
-      data: { status: "COMPLETED", completedAt: new Date() },
+    await completeFollowUpForUser({
+      organizationId: user.organizationId,
+      user,
+      followUpId: id,
     });
     revalidatePath("/follow-ups");
     return ok();
@@ -51,8 +51,15 @@ export async function sendFollowUpNowAction(formData: FormData) {
       where: { id, organizationId: user.organizationId },
     });
     if (!followUp) return fail("Follow-up not found.");
+    if (!canActOnFollowUp(user, followUp)) {
+      return fail("You can only send follow-ups assigned to you.");
+    }
     if (followUp.status === "FAILED") {
-      await db.followUp.update({ where: { id }, data: { status: "PENDING" } });
+      const reset = await db.followUp.updateMany({
+        where: ownedId(user.organizationId, id),
+        data: { status: "PENDING" },
+      });
+      if (reset.count === 0) return fail("Follow-up not found.");
     }
     await executeFollowUp(id, user.organizationId);
     revalidatePath("/follow-ups");
@@ -81,14 +88,15 @@ export async function createManualFollowUpAction(formData: FormData) {
         leadId,
         type: "DUE_REMINDER",
         dueAt,
-        assignedToId: lead.assignedAgentId,
+        assignedToId: await resolveAssigneeInOrganization(user.organizationId, lead.assignedAgentId),
         message: message || "Manual follow-up",
       },
     });
-    await db.lead.update({
-      where: { id: leadId },
+    const touched = await db.lead.updateMany({
+      where: ownedId(user.organizationId, leadId),
       data: { nextFollowUpAt: dueAt },
     });
+    if (touched.count === 0) return fail("Lead not found.");
     revalidatePath(`/leads/${leadId}`);
     revalidatePath("/follow-ups");
     return ok();

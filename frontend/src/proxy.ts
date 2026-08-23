@@ -20,6 +20,7 @@ const isProtectedRoute = createRouteMatcher([
   "/intelligence(.*)",
   "/import(.*)",
   "/properties(.*)",
+  "/admin(.*)",
 ]);
 
 const isPublicApi = createRouteMatcher([

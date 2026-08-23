@@ -110,6 +110,10 @@ export async function getBillingUsage(organizationId: string) {
   };
 }
 
+export function isUnpaidSubscription(status: string | null | undefined) {
+  return status === "CANCELED";
+}
+
 export async function assertWithinLeadLimit(organizationId: string) {
   const usage = await getBillingUsage(organizationId);
   if (usage.activeLeads >= usage.leadLimit) {

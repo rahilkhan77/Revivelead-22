@@ -3,11 +3,11 @@
 import { randomBytes } from "crypto";
 import { revalidatePath } from "next/cache";
 import { writeAudit } from "@/lib/audit";
-import { ADMIN_ROLES } from "@/lib/constants";
 import { assertWithinSeatLimit } from "@/lib/billing/plans";
 import { db } from "@/lib/db";
 import { isProduction } from "@/lib/env";
-import { inviteRoleSchema, memberRoleSchema } from "@/lib/roles";
+import { inviteRoleSchema } from "@/lib/roles";
+import { changeMembershipRole } from "@/lib/team/roles";
 import { ensureManager, fail, ok, toErrorMessage, withUser } from "@/lib/safe-action";
 import { z } from "zod";
 
@@ -65,23 +65,13 @@ export async function inviteMemberAction(formData: FormData) {
 export async function updateMemberRoleAction(formData: FormData) {
   try {
     const user = await withUser();
-    if (!ADMIN_ROLES.includes(user.role)) return fail("Only owners and admins can change roles.");
     const membershipId = String(formData.get("membershipId") ?? "");
-    const parsedRole = memberRoleSchema.safeParse(String(formData.get("role") ?? ""));
-    if (!parsedRole.success) return fail("Invalid role.");
-    const role = parsedRole.data;
-    if (role === "OWNER" && user.role !== "OWNER") return fail("Only an owner can assign the owner role.");
-    const membership = await db.membership.findFirst({
-      where: { id: membershipId, organizationId: user.organizationId },
+    await changeMembershipRole({
+      organizationId: user.organizationId,
+      actorRole: user.role,
+      membershipId,
+      role: String(formData.get("role") ?? ""),
     });
-    if (!membership) return fail("Member not found.");
-    if (membership.role === "OWNER" && role !== "OWNER") {
-      const owners = await db.membership.count({
-        where: { organizationId: user.organizationId, role: "OWNER" },
-      });
-      if (owners <= 1) return fail("An organization must keep at least one owner.");
-    }
-    await db.membership.update({ where: { id: membershipId }, data: { role } });
     revalidatePath("/team");
     return ok();
   } catch (error) {

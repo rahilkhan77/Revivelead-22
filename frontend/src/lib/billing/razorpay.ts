@@ -56,6 +56,15 @@ export function razorpayKeyId() {
   return process.env.RAZORPAY_KEY_ID?.trim() ?? "";
 }
 
+export function razorpayCheckoutEnvironment(): "sandbox" | "production" {
+  return razorpayKeyId().startsWith("rzp_test_") ? "sandbox" : "production";
+}
+
+export function limitsForSubscriptionStatus(plan: Plan, status: SubscriptionStatus) {
+  if (status === "ACTIVE" || status === "PAST_DUE") return getPlan(plan);
+  return getPlan("STARTER");
+}
+
 export function razorpayPlanId(plan: Plan) {
   if (plan === "STARTER") return process.env.RAZORPAY_PLAN_STARTER?.trim() ?? "";
   if (plan === "PRO") return process.env.RAZORPAY_PLAN_PRO?.trim() ?? "";
@@ -149,8 +158,8 @@ export async function applyRazorpaySubscription(input: {
   if (!org || org.isDemo) return;
 
   const plan = input.plan ?? planFromRazorpayPlanId(input.planId) ?? "STARTER";
-  const definition = getPlan(plan);
   const status = mapRazorpayStatus(input.status);
+  const definition = limitsForSubscriptionStatus(plan, status);
 
   await db.subscription.upsert({
     where: { organizationId: input.organizationId },
@@ -290,7 +299,7 @@ export class RazorpayPaymentProvider implements PaymentProvider {
           return {
             planUpdated: true,
             subscriptionId: liveSubId,
-            environment: "production",
+            environment: razorpayCheckoutEnvironment(),
           };
         }
         if (liveStatus === "created" && livePlanId !== planId) {
@@ -355,7 +364,7 @@ function checkoutPayload(input: PaymentCheckoutInput, subscriptionId: string): P
     description: `${definition.name} · $${definition.priceMonthly}/month`,
     prefillName: input.organizationName,
     prefillEmail: input.email ?? undefined,
-    environment: "production",
+    environment: razorpayCheckoutEnvironment(),
   };
 }
 

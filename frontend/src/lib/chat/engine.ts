@@ -82,13 +82,13 @@ export async function handleChatTurn(input: {
 
   if (merged.wantsHuman || (leadId && (merged.budget ?? 0) >= 1_000_000)) {
     await handoffToAgent(input.organizationId, leadId, merged);
-    await db.chatSession.update({
-      where: { id: session.id },
+    await db.chatSession.updateMany({
+      where: { id: session.id, organizationId: input.organizationId },
       data: { status: "HANDOFF", leadId, extractedJson: JSON.stringify(merged) },
     });
   } else {
-    await db.chatSession.update({
-      where: { id: session.id },
+    await db.chatSession.updateMany({
+      where: { id: session.id, organizationId: input.organizationId },
       data: { leadId, extractedJson: JSON.stringify(merged) },
     });
   }

@@ -51,14 +51,8 @@ export async function POST(request: Request) {
     return NextResponse.json(result, { headers: publicWidgetCorsHeaders() });
   } catch {
     return NextResponse.json(
-      {
-        sessionId: parsed.data.sessionId,
-        reply: "I can still help you look for homes. What area and budget should I start with?",
-        properties: [],
-        handoff: false,
-        leadCaptured: false,
-      },
-      { headers: publicWidgetCorsHeaders() },
+      { error: "Unable to process this chat right now." },
+      { status: 500, headers: publicWidgetCorsHeaders() },
     );
   }
 }

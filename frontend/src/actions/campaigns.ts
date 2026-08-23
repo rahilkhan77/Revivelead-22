@@ -88,7 +88,11 @@ export async function updateCampaignMessageAction(formData: FormData) {
       where: { id, campaign: { organizationId: user.organizationId } },
     });
     if (!recipient) return fail("Recipient not found.");
-    await db.campaignRecipient.update({ where: { id }, data: { message } });
+    const updated = await db.campaignRecipient.updateMany({
+      where: { id, campaign: { organizationId: user.organizationId } },
+      data: { message },
+    });
+    if (updated.count === 0) return fail("Recipient not found.");
     revalidatePath("/reactivation");
     return ok();
   } catch (error) {
@@ -116,10 +120,11 @@ export async function sendCampaignAction(formData: FormData) {
       return fail("Resume the campaign before sending.");
     }
 
-    await db.campaign.update({
-      where: { id: campaignId },
+    const sending = await db.campaign.updateMany({
+      where: { id: campaignId, organizationId: user.organizationId },
       data: { status: "SENDING" },
     });
+    if (sending.count === 0) return fail("Campaign not found.");
 
     let sent = 0;
     let failed = 0;
@@ -128,8 +133,8 @@ export async function sendCampaignAction(formData: FormData) {
       if (latest?.status === "PAUSED") break;
       if (recipient.status === "SENT" || recipient.status === "RESPONDED") continue;
       if (recipient.lead.optedOutAt) {
-        await db.campaignRecipient.update({
-          where: { id: recipient.id },
+        await db.campaignRecipient.updateMany({
+          where: { id: recipient.id, campaign: { organizationId: user.organizationId } },
           data: { status: "FAILED" },
         });
         failed += 1;
@@ -145,8 +150,8 @@ export async function sendCampaignAction(formData: FormData) {
       });
 
       if (!result.ok) {
-        await db.campaignRecipient.update({
-          where: { id: recipient.id },
+        await db.campaignRecipient.updateMany({
+          where: { id: recipient.id, campaign: { organizationId: user.organizationId } },
           data: { status: "FAILED" },
         });
         failed += 1;
@@ -165,13 +170,13 @@ export async function sendCampaignAction(formData: FormData) {
         },
       });
 
-      await db.campaignRecipient.update({
-        where: { id: recipient.id },
+      await db.campaignRecipient.updateMany({
+        where: { id: recipient.id, campaign: { organizationId: user.organizationId } },
         data: { status: "SENT", sentAt: new Date() },
       });
 
-      await db.lead.update({
-        where: { id: recipient.leadId },
+      await db.lead.updateMany({
+        where: { id: recipient.leadId, organizationId: user.organizationId },
         data: {
           isReactivated: true,
           reactivatedAt: new Date(),
@@ -186,8 +191,8 @@ export async function sendCampaignAction(formData: FormData) {
     const remaining = await db.campaignRecipient.count({
       where: { campaignId, status: { in: ["PENDING", "APPROVED", "FAILED"] } },
     });
-    await db.campaign.update({
-      where: { id: campaignId },
+    await db.campaign.updateMany({
+      where: { id: campaignId, organizationId: user.organizationId },
       data:
         remaining === 0
           ? { status: "SENT", sentAt: new Date() }
@@ -223,7 +228,11 @@ export async function pauseCampaignAction(formData: FormData) {
     if (campaign.status !== "SENDING" && campaign.status !== "PENDING_APPROVAL" && campaign.status !== "APPROVED") {
       return fail("Only an open campaign can be paused.");
     }
-    await db.campaign.update({ where: { id: campaignId }, data: { status: "PAUSED" } });
+    const paused = await db.campaign.updateMany({
+      where: { id: campaignId, organizationId: user.organizationId },
+      data: { status: "PAUSED" },
+    });
+    if (paused.count === 0) return fail("Campaign not found.");
     revalidatePath("/reactivation");
     return ok();
   } catch (error) {
@@ -241,7 +250,11 @@ export async function resumeCampaignAction(formData: FormData) {
     });
     if (!campaign) return fail("Campaign not found.");
     if (campaign.status !== "PAUSED") return fail("Only a paused campaign can be resumed.");
-    await db.campaign.update({ where: { id: campaignId }, data: { status: "PENDING_APPROVAL" } });
+    const resumed = await db.campaign.updateMany({
+      where: { id: campaignId, organizationId: user.organizationId },
+      data: { status: "PENDING_APPROVAL" },
+    });
+    if (resumed.count === 0) return fail("Campaign not found.");
     revalidatePath("/reactivation");
     return ok();
   } catch (error) {
@@ -262,11 +275,14 @@ export async function retryFailedCampaignAction(formData: FormData) {
     });
     if (failed.length === 0) return fail("No failed recipients to retry.");
     await db.campaignRecipient.updateMany({
-      where: { id: { in: failed.map((item) => item.id) } },
+      where: {
+        id: { in: failed.map((item) => item.id) },
+        campaign: { organizationId: user.organizationId },
+      },
       data: { status: "PENDING" },
     });
-    await db.campaign.update({
-      where: { id: campaignId },
+    await db.campaign.updateMany({
+      where: { id: campaignId, organizationId: user.organizationId },
       data: { status: "PENDING_APPROVAL" },
     });
     revalidatePath("/reactivation");

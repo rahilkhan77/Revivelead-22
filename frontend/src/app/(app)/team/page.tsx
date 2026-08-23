@@ -1,7 +1,8 @@
 import { PageHeader } from "@/components/page-header";
 import { TeamInviteForm } from "@/components/team-invite-form";
+import { TeamRoleSelect } from "@/components/team-role-select";
 import { requireRole } from "@/lib/authz";
-import { MANAGER_ROLES, ROLE_LABELS } from "@/lib/constants";
+import { ADMIN_ROLES, MANAGER_ROLES } from "@/lib/constants";
 import { formatMoney } from "@/lib/format";
 import { getTeamPerformance } from "@/lib/metrics";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -38,7 +39,14 @@ export default async function TeamPage() {
                   <p className="font-medium">{row.user.name}</p>
                   <p className="text-xs text-muted-foreground">{row.user.email}</p>
                 </TableCell>
-                <TableCell>{ROLE_LABELS[row.role]}</TableCell>
+                <TableCell>
+                  <TeamRoleSelect
+                    membershipId={row.membershipId}
+                    role={row.role}
+                    canChangeRoles={ADMIN_ROLES.includes(user.role)}
+                    actorRole={user.role}
+                  />
+                </TableCell>
                 <TableCell>{row.handled}</TableCell>
                 <TableCell>{row.responseTime}</TableCell>
                 <TableCell>{row.followUps}</TableCell>

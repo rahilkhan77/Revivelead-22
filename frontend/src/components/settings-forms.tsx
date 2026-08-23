@@ -167,7 +167,9 @@ function IntegrationCard({
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="font-medium">{integration.name}</p>
-          <p className="text-xs text-muted-foreground">{integration.type}</p>
+          <p className="text-xs text-muted-foreground">
+            {integration.type} · ID {integration.id}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           <Badge variant={integration.status === "CONNECTED" ? "default" : "secondary"}>
