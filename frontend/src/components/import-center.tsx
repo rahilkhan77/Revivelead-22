@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { confirmImportAction, previewImportAction } from "@/actions/import";
+import { ImportFileDropzone } from "@/components/import-file-dropzone";
 import { Button } from "@/components/ui/button";
 import { CANONICAL_FIELDS, type ColumnMapping } from "@/lib/import/mapping";
 import type { ImportRow } from "@/lib/import/parse";
@@ -14,9 +15,18 @@ export function ImportCenter() {
   const [filename, setFilename] = useState("upload.csv");
   const [mode, setMode] = useState<"skip" | "update" | "create">("skip");
   const [pending, setPending] = useState(false);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [hasFile, setHasFile] = useState(false);
 
   const valid = rows.filter((row) => row.valid).length;
   const invalid = rows.length - valid;
+
+  function resetPreview() {
+    setHeaders([]);
+    setMapping({});
+    setRows([]);
+    setFilename("upload.csv");
+  }
 
   return (
     <div className="space-y-4">
@@ -24,6 +34,10 @@ export function ImportCenter() {
         className="space-y-3 rounded-lg border border-border p-4"
         onSubmit={async (event) => {
           event.preventDefault();
+          if (!hasFile) {
+            setFileError("Choose a CSV or Excel file first.");
+            return;
+          }
           const result = await previewImportAction(new FormData(event.currentTarget));
           if (!result.ok) {
             toast.error(result.error);
@@ -35,8 +49,14 @@ export function ImportCenter() {
           setRows(result.data?.rows ?? []);
         }}
       >
-        <input name="file" type="file" accept=".csv,.xlsx,.xls,text/csv" className="text-sm" required />
-        <p className="text-xs text-muted-foreground">CSV or Excel. Future connectors: HubSpot, Salesforce, Zoho, Pipedrive, Google Sheets.</p>
+        <ImportFileDropzone
+          error={fileError}
+          onError={setFileError}
+          onFileChange={(file) => {
+            setHasFile(Boolean(file));
+            if (!file) resetPreview();
+          }}
+        />
         <Button type="submit">Preview and auto-map</Button>
       </form>
 
