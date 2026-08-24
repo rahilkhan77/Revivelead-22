@@ -7,7 +7,7 @@ import { assertWithinSeatLimit } from "@/lib/billing/plans";
 import { db } from "@/lib/db";
 import { isProduction } from "@/lib/env";
 import { inviteRoleSchema } from "@/lib/roles";
-import { changeMembershipRole } from "@/lib/team/roles";
+import { changeMembershipRole, removeMembership } from "@/lib/team/roles";
 import { ensureManager, fail, ok, toErrorMessage, withUser } from "@/lib/safe-action";
 import { z } from "zod";
 
@@ -73,6 +73,32 @@ export async function updateMemberRoleAction(formData: FormData) {
       role: String(formData.get("role") ?? ""),
     });
     revalidatePath("/team");
+    return ok();
+  } catch (error) {
+    return fail(toErrorMessage(error));
+  }
+}
+
+export async function removeMemberAction(formData: FormData) {
+  try {
+    const user = await withUser();
+    const membershipId = String(formData.get("membershipId") ?? "");
+    const removed = await removeMembership({
+      organizationId: user.organizationId,
+      actorRole: user.role,
+      actorUserId: user.id,
+      membershipId,
+    });
+    await writeAudit({
+      organizationId: user.organizationId,
+      userId: user.id,
+      action: "team.member_removed",
+      entity: "Membership",
+      entityId: removed.id,
+      metadata: { userId: removed.userId },
+    });
+    revalidatePath("/team");
+    revalidatePath("/leads");
     return ok();
   } catch (error) {
     return fail(toErrorMessage(error));

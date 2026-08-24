@@ -12,9 +12,14 @@ export const REACTIVATION_SEGMENTS = [
 export function segmentWhere(
   organizationId: string,
   segmentId: string,
+  overrideDays?: number,
 ): Prisma.LeadWhereInput {
   const segment = REACTIVATION_SEGMENTS.find((item) => item.id === segmentId) ?? REACTIVATION_SEGMENTS[0];
-  const cutoff = new Date(Date.now() - segment.days * 86_400_000);
+  const days =
+    typeof overrideDays === "number" && Number.isFinite(overrideDays) && overrideDays >= 1
+      ? Math.min(overrideDays, 365)
+      : segment.days;
+  const cutoff = new Date(Date.now() - days * 86_400_000);
   return {
     organizationId,
     status: { in: segment.id === "no_response" ? ["NEW", "CONTACTED"] : ["DORMANT", "LOST"] },

@@ -5,6 +5,7 @@ import { StatusBadge, TemperatureBadge } from "@/components/status-badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { FollowUpTimeline } from "@/components/follow-up-timeline";
 import { LeadActions } from "@/components/lead-actions";
+import { LeadDeleteButton } from "@/components/lead-delete-button";
 import { LeadEditForm } from "@/components/lead-edit-form";
 import { requireUser, canViewAllLeads } from "@/lib/authz";
 import { formatBudget, formatDateTime, formatRelative } from "@/lib/format";
@@ -80,6 +81,11 @@ export default async function LeadDetailPage({
                 </>
               ) : null}
               <LeadEditForm lead={lead} />
+              {canViewAllLeads(user.role) ? (
+                <div className="mt-4 flex justify-end border-t border-border pt-3">
+                  <LeadDeleteButton leadId={lead.id} leadName={lead.name} />
+                </div>
+              ) : null}
             </CardContent>
           </Card>
           <Card>

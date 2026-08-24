@@ -28,7 +28,7 @@ export async function createReactivationCampaignAction(formData: FormData) {
     if (open) return fail("A campaign for this segment is already awaiting approval or sending.");
 
     const leads = await db.lead.findMany({
-      where: segmentWhere(user.organizationId, segment),
+      where: segmentWhere(user.organizationId, segment, days),
       take: 50,
     });
 

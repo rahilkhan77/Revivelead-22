@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/page-header";
 import { TeamInviteForm } from "@/components/team-invite-form";
+import { TeamMemberRemove } from "@/components/team-member-remove";
 import { TeamRoleSelect } from "@/components/team-role-select";
 import { requireRole } from "@/lib/authz";
 import { ADMIN_ROLES, MANAGER_ROLES } from "@/lib/constants";
@@ -10,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 export default async function TeamPage() {
   const user = await requireRole(MANAGER_ROLES);
   const rows = await getTeamPerformance(user.organizationId);
+  const isAdmin = ADMIN_ROLES.includes(user.role);
 
   return (
     <div>
@@ -30,6 +32,7 @@ export default async function TeamPage() {
               <TableHead>Qualified</TableHead>
               <TableHead>Won</TableHead>
               <TableHead>Revenue</TableHead>
+              {isAdmin ? <TableHead className="text-right">Actions</TableHead> : null}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -53,6 +56,15 @@ export default async function TeamPage() {
                 <TableCell>{row.qualified}</TableCell>
                 <TableCell>{row.won}</TableCell>
                 <TableCell>{formatMoney(row.revenue)}</TableCell>
+                {isAdmin ? (
+                  <TableCell className="text-right">
+                    <TeamMemberRemove
+                      membershipId={row.membershipId}
+                      name={row.user.name}
+                      canRemove={row.user.id !== user.id && (row.role !== "OWNER" || user.role === "OWNER")}
+                    />
+                  </TableCell>
+                ) : null}
               </TableRow>
             ))}
           </TableBody>

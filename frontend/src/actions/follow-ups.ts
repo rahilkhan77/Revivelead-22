@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { canViewAllLeads } from "@/lib/roles";
 import { db } from "@/lib/db";
-import { canActOnFollowUp, completeFollowUpForUser } from "@/lib/follow-up/access";
+import {
+  canActOnFollowUp,
+  cancelFollowUpForUser,
+  completeFollowUpForUser,
+  rescheduleFollowUpForUser,
+} from "@/lib/follow-up/access";
 import { executeFollowUp, markDormantLeads, processDueFollowUps } from "@/lib/follow-up/engine";
 import { leadVisibilityWhere } from "@/lib/leads/service";
 import { resolveAssigneeInOrganization } from "@/lib/org";
@@ -20,6 +25,45 @@ export async function completeFollowUpAction(formData: FormData) {
       followUpId: id,
     });
     revalidatePath("/follow-ups");
+    return ok();
+  } catch (error) {
+    return fail(toErrorMessage(error));
+  }
+}
+
+export async function rescheduleFollowUpAction(formData: FormData) {
+  try {
+    const user = await withUser();
+    const id = String(formData.get("id") ?? "");
+    const dueRaw = String(formData.get("dueAt") ?? "");
+    if (!dueRaw) return fail("Pick a new date and time.");
+    const dueAt = new Date(dueRaw);
+    if (Number.isNaN(dueAt.getTime())) return fail("Invalid due date.");
+    await rescheduleFollowUpForUser({
+      organizationId: user.organizationId,
+      user,
+      followUpId: id,
+      dueAt,
+    });
+    revalidatePath("/follow-ups");
+    revalidatePath("/leads");
+    return ok();
+  } catch (error) {
+    return fail(toErrorMessage(error));
+  }
+}
+
+export async function cancelFollowUpAction(formData: FormData) {
+  try {
+    const user = await withUser();
+    const id = String(formData.get("id") ?? "");
+    await cancelFollowUpForUser({
+      organizationId: user.organizationId,
+      user,
+      followUpId: id,
+    });
+    revalidatePath("/follow-ups");
+    revalidatePath("/leads");
     return ok();
   } catch (error) {
     return fail(toErrorMessage(error));

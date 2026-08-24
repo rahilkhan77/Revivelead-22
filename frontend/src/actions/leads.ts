@@ -10,7 +10,7 @@ import { db } from "@/lib/db";
 import { leadFieldSchema, updateLeadFields } from "@/lib/leads/fields";
 import { ingestLead, leadVisibilityWhere, receiveLeadReply, updateLeadStatus } from "@/lib/leads/service";
 import { getMessagingProvider } from "@/lib/messaging/provider";
-import { fail, ok, toErrorMessage, withUser, type ActionResult } from "@/lib/safe-action";
+import { ensureManager, fail, ok, toErrorMessage, withUser, type ActionResult } from "@/lib/safe-action";
 import { assertMutated, ownedId } from "@/lib/tenant";
 import type { IntentType, LeadStatus, LeadTemperature } from "@prisma/client";
 
@@ -137,6 +137,44 @@ export async function assignLeadAction(formData: FormData): Promise<ActionResult
     });
     revalidatePath("/leads");
     revalidatePath("/team");
+    return ok();
+  } catch (error) {
+    return fail(toErrorMessage(error));
+  }
+}
+
+export async function deleteLeadAction(formData: FormData): Promise<ActionResult> {
+  try {
+    const user = await withUser();
+    ensureManager(user.role);
+    const leadId = String(formData.get("leadId") ?? "");
+    if (!leadId) return fail("Lead not found.");
+    const lead = await db.lead.findFirst({
+      where: { id: leadId, organizationId: user.organizationId },
+      select: { id: true, name: true },
+    });
+    if (!lead) return fail("Lead not found.");
+
+    // Tenant-scoped delete. Cascades remove messages/follow-ups/campaign recipients;
+    // revenue events and properties keep their history with the lead link set to null.
+    const deleted = await db.lead.deleteMany({
+      where: { id: leadId, organizationId: user.organizationId },
+    });
+    if (deleted.count === 0) return fail("Lead not found.");
+
+    await writeAudit({
+      organizationId: user.organizationId,
+      userId: user.id,
+      action: "lead.deleted",
+      entity: "Lead",
+      entityId: leadId,
+      metadata: { name: lead.name },
+    });
+
+    revalidatePath("/leads");
+    revalidatePath("/dashboard");
+    revalidatePath("/revenue");
+    revalidatePath("/follow-ups");
     return ok();
   } catch (error) {
     return fail(toErrorMessage(error));

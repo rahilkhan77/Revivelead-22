@@ -28,11 +28,8 @@ export function ImportFileDropzone({
 
   function assignFile(next: File | null) {
     const input = inputRef.current;
-    if (input) {
-      const transfer = new DataTransfer();
-      if (next) transfer.items.add(next);
-      input.files = transfer.files;
-    }
+    // Reset the native input when clearing so re-selecting the same file re-fires onChange.
+    if (input && !next) input.value = "";
     setFile(next);
     onFileChange(next);
   }
